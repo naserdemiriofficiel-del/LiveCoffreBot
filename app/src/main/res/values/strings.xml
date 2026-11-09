@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Live Coffre Bot</string>
+    <string name="service_label">Live Coffre Bot – assistant de live</string>
+    <string name="service_description">Pose automatiquement les Coffres au trésor et relance le Sac-cadeau pendant tes lives TikTok, dans la limite du budget que tu as fixé. N\'agit que dans l\'application TikTok et seulement quand tu appuies sur ▶ dans la bulle.</string>
+</resources>
