@@ -14,8 +14,11 @@ Pose tes Coffres au trésor au hasard et relance le Sac-cadeau pendant tes lives
 1. Ouvre l'appli **Live Coffre Bot**, règle ton budget et tes temps, puis appuie sur **Enregistrer**.
 2. Appuie sur « Activer le service d'accessibilité » → Applications installées → **Live Coffre Bot** → Activer.
    (Sur Samsung, si c'est grisé : Paramètres → Applications → Live Coffre Bot → ⋮ → « Autoriser les paramètres restreints ».)
-3. Lance ton live. Une petite bulle apparaît : **▶** démarre, **⏸** met en pause, **■** arrête, **✥** se glisse pour la déplacer.
-4. Le bot s'arrête tout seul quand le budget est atteint.
+3. Lance ton live. **La première fois, appuie sur 🎯 (apprentissage)** et touche les boutons que la bulle te demande
+   (Interagir → Coffre au trésor → montant → Envoyer → Sac-cadeau → Envoyer). Pour les deux « Envoyer »,
+   le bot retient seulement la position, rien n'est dépensé.
+4. La bulle (horizontale) : **▶** démarre / **⏸** pause, **🎯** apprentissage, **✕** arrête tout et ferme le bot, **✥** pour la déplacer.
+5. Le bot s'arrête tout seul quand le budget est atteint.
 
 ## Sécurités
 - N'agit que dans TikTok, et seulement après ▶.
@@ -24,4 +27,4 @@ Pose tes Coffres au trésor au hasard et relance le Sac-cadeau pendant tes lives
 - S'arrête après 4 échecs d'affilée.
 
 ## Si ça bloque
-Pendant le live, appuie sur **🔍** dans la bulle, puis dans l'appli **Partager le diagnostic** et envoie-moi le fichier.
+Pendant le live, fais un **appui long sur le texte** de la bulle (le compteur), puis dans l'appli **Partager le diagnostic** et envoie-moi le fichier.

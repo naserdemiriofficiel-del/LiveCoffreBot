@@ -3,7 +3,10 @@ package ch.kaliterimes.livebot
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
+import android.graphics.Point
 import android.graphics.Rect
+import android.os.Build
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -105,20 +108,34 @@ class UiDriver(private val service: AccessibilityService) {
         return probe()
     }
 
-    /** Appuie sur l'élément (ou sur son parent cliquable), sinon tape au centre. */
+    /**
+     * Appuie au centre exact de l'élément, comme un doigt.
+     * (On ne clique plus sur un « parent » : il pouvait s'agir d'un grand bloc qui contient
+     * plusieurs boutons, et TikTok ouvrait alors le mauvais.)
+     */
     suspend fun click(node: AccessibilityNodeInfo): Boolean {
-        var n: AccessibilityNodeInfo? = node
-        var depth = 0
-        while (n != null && depth < 6) {
-            if (n.isClickable && n.isEnabled) {
-                if (n.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
-                break
-            }
-            n = n.parent; depth++
-        }
         val r = Rect(); node.getBoundsInScreen(r)
-        if (r.isEmpty) return false
-        return tap(r.exactCenterX(), r.exactCenterY())
+        if (!r.isEmpty) return tap(r.exactCenterX(), r.exactCenterY())
+        return node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+    }
+
+    /** Taille RÉELLE de l'écran, barre de navigation et barre d'état comprises. */
+    fun screenSize(): Point {
+        val wm = service.getSystemService(WindowManager::class.java)
+        return if (Build.VERSION.SDK_INT >= 30) {
+            val b = wm.currentWindowMetrics.bounds
+            Point(b.width(), b.height())
+        } else {
+            val p = Point()
+            @Suppress("DEPRECATION") wm.defaultDisplay.getRealSize(p)
+            p
+        }
+    }
+
+    /** Tape à une position apprise (fractions de l'écran). */
+    suspend fun tapPos(p: Pos): Boolean {
+        val s = screenSize()
+        return tap(p.x * s.x, p.y * s.y)
     }
 
     /** Tape à une position précise de l'écran (en pixels). */
@@ -136,8 +153,8 @@ class UiDriver(private val service: AccessibilityService) {
 
     /** Tape à une position en % de l'écran. */
     suspend fun tapPercent(px: Float, py: Float): Boolean {
-        val dm = service.resources.displayMetrics
-        return tap(px * dm.widthPixels, py * dm.heightPixels)
+        val s = screenSize()
+        return tap(px * s.x, py * s.y)
     }
 
     /**
@@ -154,6 +171,18 @@ class UiDriver(private val service: AccessibilityService) {
         service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
         delay(700)
         return true
+    }
+
+    /**
+     * « Retour » sans vérifier les textes (utilisé seulement quand on SAIT qu'un panneau est ouvert,
+     * par ex. pendant l'apprentissage). Toujours au moins 4 s entre deux « Retour ».
+     */
+    suspend fun forceBack() {
+        val now = System.currentTimeMillis()
+        if (now - lastBackAt < 4000) delay(4000 - (now - lastBackAt))
+        lastBackAt = System.currentTimeMillis()
+        service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+        delay(800)
     }
 
     /** Un des panneaux (Interagir / Coffre / Sac-cadeau / Super Fan) est-il ouvert ? */

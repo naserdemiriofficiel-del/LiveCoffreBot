@@ -55,6 +55,7 @@ class LiveBotService : AccessibilityService() {
     override fun onServiceConnected() {
         instance = this
         ui = UiDriver(this)
+        pos = Positions.load(this)
         overlay = Overlay(this).also { it.show() }
         BotLog.add("Service activé. Ouvre ton live puis appuie sur ▶ dans la bulle.")
         refresh()
@@ -89,6 +90,8 @@ class LiveBotService : AccessibilityService() {
     fun startBot() {
         if (running) return
         cfg = Config.load(this)
+        pos = Positions.load(this)
+        if (!pos.calibrated) BotLog.add("Astuce : fais l'apprentissage 🎯 pour des appuis précis")
         if (!ui.isTikTokVisible()) {
             setStatus("Ouvre d'abord ton live TikTok")
             return
@@ -115,6 +118,14 @@ class LiveBotService : AccessibilityService() {
         chestJob = null; bagJob = null
         BotLog.add("■ $reason – dépensé $spent pièces ($chests coffres, $bags sacs)")
         setStatus(reason)
+    }
+
+    /** ✕ : arrête tout, enlève la bulle et éteint le service (à réactiver depuis l'appli). */
+    fun quit() {
+        stopBot("Fermé")
+        overlay?.hide()
+        BotLog.add("✕ Bot fermé. Pour le relancer : appli Live Coffre Bot → Activer le service")
+        disableSelf()
     }
 
     fun toggle() { if (running) stopBot("Mis en pause") else startBot() }
@@ -210,22 +221,37 @@ class LiveBotService : AccessibilityService() {
 
     // ------------------------------------------------------------------ Actions à l'écran
 
+    private var pos = Positions()
+
+    /** Tape sur une cible : position apprise si elle existe, sinon l'élément qui porte ce texte. */
+    private suspend fun tapTarget(text: String?, p: Pos?): Boolean {
+        if (p != null) return ui.tapPos(p)
+        val n = text?.let { ui.findExact(it) } ?: return false
+        return ui.click(n)
+    }
+
+    private fun interactPanelVisible() =
+        ui.findExact("Sac-cadeau") != null || ui.findExact("Coffre au trésor") != null
+
     /** Ouvre le panneau « Interagir ». */
     private suspend fun openInteract(): Boolean {
         if (!ui.isTikTokVisible()) { BotLog.add("TikTok n'est pas à l'écran"); return false }
-        if (ui.findExact("Sac-cadeau") != null || ui.findExact("Coffre au trésor") != null) return true
+        if (interactPanelVisible()) return true
 
-        // 1) Par son nom d'accessibilité
-        val btn = ui.allNodes().firstOrNull {
-            val d = (it.contentDescription ?: it.text ?: "").toString()
-            it.isVisibleToUser && (d.equals("Interagir", true) || d.equals("Interact", true))
+        val p = pos.interact
+        if (p != null) {
+            ui.tapPos(p)
+        } else {
+            val btn = ui.allNodes().firstOrNull {
+                val d = (it.contentDescription ?: it.text ?: "").toString()
+                it.isVisibleToUser && (d.equals("Interagir", true) || d.equals("Interact", true))
+            }
+            if (btn != null) ui.click(btn) else ui.tapPercent(cfg.interactX, cfg.interactY)
         }
-        if (btn != null) ui.click(btn) else ui.tapPercent(cfg.interactX, cfg.interactY)
 
-        val opened = ui.waitFor(3000) {
-            ui.findExact("Sac-cadeau") ?: ui.findExact("Coffre au trésor")
-        } != null
-        if (!opened) BotLog.add("Panneau Interagir introuvable (fais un diagnostic 🔍)")
+        if (!pos.textsOk && pos.calibrated) { delay(1500); return true } // textes illisibles : on se fie aux positions
+        val opened = ui.waitFor(3000) { if (interactPanelVisible()) true else null } == true
+        if (!opened) BotLog.add("Panneau Interagir pas ouvert (refais l'apprentissage 🎯)")
         return opened
     }
 
@@ -239,32 +265,32 @@ class LiveBotService : AccessibilityService() {
 
     private suspend fun sendChest(): Boolean {
         if (!openInteract()) return false
-        val item = ui.findExact("Coffre au trésor") ?: return abort("Bouton Coffre au trésor introuvable")
-        ui.click(item)
+        if (!tapTarget("Coffre au trésor", pos.chest)) return abort("Bouton Coffre au trésor introuvable")
 
-        // Attendre le panneau du coffre (liste « Articles » + bouton Envoyer)
-        ui.waitFor(4000) { ui.findExact("Envoyer") } ?: return abort("Panneau du coffre pas chargé")
-        delay(500)
+        val panel = ui.waitFor(3500) { ui.findExact("Envoyer") ?: ui.findExact("Articles") }
+        if (panel == null && (pos.textsOk || pos.chestSend == null)) return abort("Panneau du coffre pas ouvert")
+        delay(600)
         if (!moneyGuard()) return false
 
         // Choisir le montant (20, 100, ...)
-        val amount = ui.findAllExact(cfg.chestAmount.toString())
-        if (amount.isNotEmpty()) {
-            ui.click(amount.first()); delay(500)
+        val ap = pos.amount
+        if (ap != null) {
+            ui.tapPos(ap); delay(600)
         } else {
-            BotLog.add("Montant ${cfg.chestAmount} pas trouvé, j'utilise celui déjà choisi")
+            val amount = ui.findAllExact(cfg.chestAmount.toString())
+            if (amount.isNotEmpty()) { ui.click(amount.first()); delay(600) }
+            else BotLog.add("Montant ${cfg.chestAmount} pas trouvé, j'utilise celui déjà choisi")
         }
         if (!moneyGuard()) return false
 
-        val send = ui.findExact("Envoyer") ?: return abort("Bouton Envoyer disparu")
-        if (!send.isEnabled) return abort("Bouton Envoyer grisé")
-        ui.click(send)
+        if (!tapTarget("Envoyer", pos.chestSend)) return abort("Bouton Envoyer introuvable")
+        delay(1500)
+        if (!moneyGuard()) { stopBot("Arrêt sécurité : écran de paiement"); return false }
 
-        // Succès = le panneau se ferme
-        val closed = ui.waitFor(6000) { if (ui.findExact("Envoyer") == null) true else null } == true
-        if (!closed) {
-            if (!moneyGuard()) { stopBot("Arrêt sécurité : écran de paiement"); return false }
-            return abort("Le coffre ne semble pas parti")
+        // Si les textes sont lisibles, on vérifie que le panneau s'est bien refermé
+        if (pos.textsOk) {
+            val closed = ui.waitFor(5000) { if (ui.findExact("Envoyer") == null) true else null } == true
+            if (!closed) return abort("Le coffre ne semble pas parti")
         }
         return true
     }
@@ -272,28 +298,28 @@ class LiveBotService : AccessibilityService() {
     /** Renvoie le coût du sac lancé, -1 si impossible pour l'instant, -2 si budget insuffisant. */
     private suspend fun sendBag(): Int {
         if (!openInteract()) return -1
-        val item = ui.findExact("Sac-cadeau") ?: run { abort("Bouton Sac-cadeau introuvable"); return -1 }
-        ui.click(item)
+        if (!tapTarget("Sac-cadeau", pos.bag)) { abort("Bouton Sac-cadeau introuvable"); return -1 }
 
-        val send = ui.waitFor(4000) { ui.findExact("Envoyer") }
-        if (send == null) {
+        val send = ui.waitFor(3500) { ui.findExact("Envoyer") }
+        if (send == null && (pos.textsOk || pos.bagSend == null)) {
             // Pas de bouton Envoyer : en général le sac précédent tourne encore
+            BotLog.add("Sac-cadeau pas disponible (encore actif ?)")
             ui.closePanelSafely()
             return -1
         }
-        delay(500)
+        delay(600)
         if (!moneyGuard()) return -1
-        if (!send.isEnabled) { ui.closePanelSafely(); return -1 }
+        if (send != null && !send.isEnabled) { ui.closePanelSafely(); return -1 }
 
         val cost = readBagCost() ?: cfg.bagCostFallback
         if (cost > remaining()) { ui.closePanelSafely(); return -2 }
 
-        ui.click(ui.findExact("Envoyer") ?: send)
-        val closed = ui.waitFor(6000) { if (ui.findExact("Envoyer") == null) true else null } == true
-        if (!closed) {
-            if (!moneyGuard()) { stopBot("Arrêt sécurité : écran de paiement"); return -1 }
-            abort("Le sac ne semble pas parti")
-            return -1
+        if (!tapTarget("Envoyer", pos.bagSend)) { abort("Bouton Envoyer introuvable"); return -1 }
+        delay(1500)
+        if (!moneyGuard()) { stopBot("Arrêt sécurité : écran de paiement"); return -1 }
+        if (pos.textsOk) {
+            val closed = ui.waitFor(5000) { if (ui.findExact("Envoyer") == null) true else null } == true
+            if (!closed) { abort("Le sac ne semble pas parti"); return -1 }
         }
         return cost
     }
@@ -305,7 +331,6 @@ class LiveBotService : AccessibilityService() {
             (it.text ?: it.contentDescription ?: "").toString().startsWith("Total des Pièces", true)
         }
         if (idx < 0) return null
-        // Le texte peut contenir le nombre (« Total des Pièces 20 ») ou être dans un élément voisin
         Regex("""\d+""").find((nodes[idx].text ?: "").toString())?.let { return it.value.toInt() }
         for (j in idx + 1 until minOf(idx + 6, nodes.size)) {
             val t = (nodes[j].text ?: "").toString().trim()
@@ -320,17 +345,79 @@ class LiveBotService : AccessibilityService() {
         return false
     }
 
+    // ------------------------------------------------------------------ Apprentissage 🎯
+
+    fun startCalibration() {
+        if (running) stopBot("Pause pour l'apprentissage")
+        if (!ui.isTikTokVisible()) { setStatus("Ouvre d'abord ton live TikTok"); return }
+        scope.launch { uiLock.withLock { calibrate() } }
+    }
+
+    /**
+     * Tu touches toi-même chaque bouton une fois ; le bot retient la position exacte.
+     * Pour les deux « Envoyer », il retient la position SANS appuyer (rien n'est dépensé).
+     */
+    private suspend fun calibrate() {
+        cfg = Config.load(this)
+        BotLog.add("🎯 Apprentissage démarré")
+        setStatus("Apprentissage…")
+        val o = overlay ?: return
+        suspend fun ask(step: String): Pos? {
+            val p = o.captureTouch(step)
+            if (p == null) { BotLog.add("Apprentissage annulé"); setStatus("Apprentissage annulé") }
+            delay(350) // laisser le voile disparaître
+            return p
+        }
+
+        // Fermer un éventuel panneau resté ouvert
+        ui.closePanelSafely()
+
+        val pInteract = ask("1/6  Touche le bouton « Interagir » en bas de l'écran") ?: return
+        ui.tapPos(pInteract); delay(1800)
+        val textsOk = interactPanelVisible()
+        BotLog.add(if (textsOk) "Textes TikTok lisibles ✔" else "Textes TikTok illisibles → positions seules")
+
+        val pChest = ask("2/6  Touche « Coffre au trésor »\n(PAS le Coffre de Super Fan !)") ?: return closeAfterCancel()
+        ui.tapPos(pChest); delay(1800)
+
+        val pAmount = ask("3/6  Touche le montant du coffre que tu veux (${cfg.chestAmount})") ?: return closeAfterCancel()
+        ui.tapPos(pAmount); delay(800)
+
+        val pChestSend = ask("4/6  Touche le bouton « Envoyer »\n(je retiens seulement, rien n'est envoyé)") ?: return closeAfterCancel()
+        ui.forceBack(); delay(1200)
+
+        ui.tapPos(pInteract); delay(1800)
+        val pBag = ask("5/6  Touche « Sac-cadeau »") ?: return closeAfterCancel()
+        ui.tapPos(pBag); delay(1800)
+
+        val pBagSend = ask("6/6  Touche le bouton « Envoyer » du sac\n(je retiens seulement, rien n'est envoyé)\nS'il n'y a pas de bouton Envoyer (sac en cours), touche l'endroit où il est d'habitude.") ?: return closeAfterCancel()
+        ui.forceBack(); delay(800)
+
+        pos = Positions(pInteract, pChest, pAmount, pChestSend, pBag, pBagSend, textsOk)
+        pos.save(this)
+        BotLog.add("🎯 Apprentissage terminé ✔ – appuie sur ▶")
+        setStatus("Appris ✔ – appuie sur ▶")
+    }
+
+    private suspend fun closeAfterCancel() {
+        ui.forceBack()
+    }
+
     // ------------------------------------------------------------------ Diagnostic
 
     /** Enregistre la liste des éléments visibles à l'écran, pour m'aider à corriger si ça bloque. */
     fun diagnostic(): File {
+        val snaps = File(filesDir, "releves.txt")
+        val sz = ui.screenSize()
+        val snap = "##### ${java.util.Date()} – écran ${sz.x}x${sz.y} – $status\n" +
+            "Positions: $pos\n" + ui.dump()
+        // On garde les 4 derniers relevés (écran du live, panneau Interagir, panneau coffre, panneau sac)
+        val previous = if (snaps.exists()) snaps.readText().split("#####").filter { it.isNotBlank() }.takeLast(3) else emptyList()
+        snaps.writeText((previous.map { "#####$it" } + snap).joinToString("\n"))
+
         val f = File(filesDir, "diagnostic.txt")
-        val dm = resources.displayMetrics
-        f.writeText(
-            "Écran ${dm.widthPixels}x${dm.heightPixels}\nStatut: $status\n\n" +
-                ui.dump() + "\n\n--- Journal ---\n" + BotLog.text()
-        )
-        BotLog.add("🔍 Diagnostic enregistré (Partager depuis l'appli)")
+        f.writeText(snaps.readText() + "\n\n--- Journal ---\n" + BotLog.text())
+        BotLog.add("🔍 Relevé enregistré (Partager depuis l'appli)")
         return f
     }
 }

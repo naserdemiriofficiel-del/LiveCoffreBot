@@ -74,6 +74,10 @@ class MainActivity : Activity() {
 
         btn("💾 Enregistrer les réglages") { save() }
         btn("📤 Partager le diagnostic") { shareDiagnostic() }
+        btn("🗑 Effacer l'apprentissage 🎯") {
+            Positions.clear(this)
+            Toast.makeText(this, "Positions effacées – refais 🎯 pendant le live", Toast.LENGTH_SHORT).show()
+        }
 
         section("📋 Journal")
         logView = TextView(this).apply {
@@ -127,7 +131,7 @@ class MainActivity : Activity() {
     private fun shareDiagnostic() {
         val f = File(filesDir, "diagnostic.txt")
         if (!f.exists()) {
-            Toast.makeText(this, "Pendant le live, appuie d'abord sur 🔍 dans la bulle", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Pendant le live, fais d'abord un appui long sur le compteur de la bulle", Toast.LENGTH_LONG).show()
             return
         }
         val uri = FileProvider.getUriForFile(this, "ch.kaliterimes.livebot.files", f)
