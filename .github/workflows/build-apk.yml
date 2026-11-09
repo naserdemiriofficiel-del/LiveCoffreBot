@@ -4,6 +4,9 @@ on:
   push:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -43,3 +46,14 @@ jobs:
         with:
           name: LiveCoffreBot-apk
           path: app/build/outputs/apk/debug/*.apk
+
+      - name: Lien de téléchargement direct
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk LiveCoffreBot.apk
+          gh release delete derniere-version --yes --cleanup-tag || true
+          gh release create derniere-version LiveCoffreBot.apk \
+            --title "Dernière version" \
+            --notes "Version compilée automatiquement le $(date '+%d.%m.%Y à %H:%M'). Télécharge LiveCoffreBot.apk et installe-le."
